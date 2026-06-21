@@ -1,0 +1,6 @@
+# Expected future components (to be implemented in later phases):
+#
+#   LoginForm       — Email/password login form, integrates with api-server auth endpoints
+#   DocumentList    — Grid/list view of user's documents on the dashboard
+#   Editor          — Core collaborative text editor (Yjs + CodeMirror or ProseMirror)
+#   PresenceAvatars — Shows live collaborator cursors and avatar bubbles in the editor

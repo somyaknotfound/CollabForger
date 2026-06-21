@@ -1,0 +1,5 @@
+# This directory will hold client-side utilities implemented in later phases:
+#
+#   api-client.ts   — Typed fetch wrapper for communicating with apps/api-server
+#   auth.ts         — Access/refresh token storage, retrieval, and rotation logic
+#   ws-client.ts    — WebSocket client for the realtime-server connection
