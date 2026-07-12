@@ -1,23 +1,31 @@
+import cookieParser from "cookie-parser";
 import cors from "cors";
 import dotenv from "dotenv";
 import express from "express";
 
 import { connectDB } from "./config/db";
 import { redis } from "./config/redis";
+import authRoutes from "./routes/auth";
+import documentRoutes from "./routes/documents";
 
 dotenv.config();
 
 const app = express();
 const port = Number(process.env.PORT) || 3001;
 
-app.use(cors());
+// credentials: true + an explicit origin are required together — the
+// refresh token travels as an httpOnly cookie, which browsers refuse to
+// send cross-origin under a wildcard '*' CORS origin.
+app.use(cors({ origin: process.env.CORS_ORIGIN ?? "http://localhost:3000", credentials: true }));
 app.use(express.json());
+app.use(cookieParser());
 
 app.get("/health", (_req, res) => {
   res.json({ status: "ok" });
 });
 
-// TODO: Mount auth routes (e.g. app.use("/auth", authRoutes))
+app.use("/auth", authRoutes);
+app.use("/documents", documentRoutes);
 
 async function start(): Promise<void> {
   const mongoUri = process.env.MONGODB_URI;
