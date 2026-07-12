@@ -1,0 +1,17 @@
+{
+  "name": "@collabforge/shared-types",
+  "version": "0.1.0",
+  "description": "Shared TypeScript type definitions for the CollabForge monorepo",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  }
+}
