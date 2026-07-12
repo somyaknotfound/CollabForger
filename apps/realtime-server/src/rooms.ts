@@ -2,9 +2,9 @@ import type { WebSocket } from "ws";
 import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
 
-import { setupAwarenessBroadcast } from "./awareness";
+import { setupAwarenessBroadcast, setupRedisAwarenessSubscription, teardownRedisAwarenessSubscription } from "./awareness";
 import { flushSnapshot, loadSnapshot } from "./persistence";
-import { setupSyncBroadcast } from "./sync";
+import { setupRedisSyncSubscription, setupSyncBroadcast, teardownRedisSyncSubscription } from "./sync";
 
 export interface Room {
   documentId: string;
@@ -47,6 +47,8 @@ async function createRoom(documentId: string): Promise<Room> {
   // snapshot write of the data we just loaded.
   setupSyncBroadcast(room);
   setupAwarenessBroadcast(room);
+  setupRedisSyncSubscription(room);
+  setupRedisAwarenessSubscription(room);
 
   console.log(`room created: ${documentId}${snapshot ? " (restored from snapshot)" : ""}`);
   return room;
@@ -73,6 +75,11 @@ export async function getOrCreateRoom(documentId: string): Promise<Room> {
 export async function destroyRoom(documentId: string): Promise<void> {
   const room = rooms.get(documentId);
   if (!room) return;
+
+  // Unsubscribe before the final flush so no in-flight Redis message from
+  // another instance gets applied to a doc that's mid-teardown.
+  teardownRedisSyncSubscription(room);
+  teardownRedisAwarenessSubscription(room);
 
   await flushSnapshot(room);
 

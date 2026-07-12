@@ -3,9 +3,14 @@ import * as encoding from "lib0/encoding";
 import { WebSocket } from "ws";
 import { applyAwarenessUpdate, encodeAwarenessUpdate, removeAwarenessStates } from "y-protocols/awareness";
 
+import { RECV_FROM_REDIS, redisPub, subscribeChannel, unsubscribeChannel } from "./config/redis";
 import type { Room } from "./rooms";
 
 export const MESSAGE_AWARENESS = 1;
+
+function awarenessChannel(documentId: string): string {
+  return `doc:${documentId}:awareness`;
+}
 
 interface AwarenessChanges {
   added: number[];
@@ -52,7 +57,34 @@ export function setupAwarenessBroadcast(room: Room): void {
         client.send(message);
       }
     }
+
+    // Mirrors sync.ts: only re-publish awareness changes that originated
+    // locally. A change we just applied FROM Redis (origin === RECV_FROM_REDIS,
+    // never a WebSocket) must not be published again — see setupRedisAwarenessSubscription.
+    if (origin !== RECV_FROM_REDIS) {
+      void redisPub.publish(
+        awarenessChannel(room.documentId),
+        Buffer.from(encodeAwarenessUpdate(room.awareness, changedClientIds)),
+      );
+    }
   });
+}
+
+/**
+ * Subscribes this room to its Redis awareness channel, so presence changes
+ * on OTHER instances (cursor moves, joins, disconnect-driven removals) get
+ * applied to this instance's Awareness — which triggers the broadcast above,
+ * fanning it out to this instance's local clients. Call once, at room
+ * creation (mirrors setupAwarenessBroadcast).
+ */
+export function setupRedisAwarenessSubscription(room: Room): void {
+  subscribeChannel(awarenessChannel(room.documentId), (payload) => {
+    applyAwarenessUpdate(room.awareness, new Uint8Array(payload), RECV_FROM_REDIS);
+  });
+}
+
+export function teardownRedisAwarenessSubscription(room: Room): void {
+  unsubscribeChannel(awarenessChannel(room.documentId));
 }
 
 /**
