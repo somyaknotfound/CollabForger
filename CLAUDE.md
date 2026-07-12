@@ -93,8 +93,8 @@ squarely inside one section, delegate to its agent (see "Working with subagents"
 | Cache | Redis (same instance as pub/sub, separate logical usage) | Hot-path caching for doc metadata + session lookups |
 | Auth | JWT access + refresh token rotation | Access token in memory (not localStorage, XSS risk), refresh in httpOnly cookie |
 | Validation | Zod | Type-safe, shared with frontend via shared-types |
-| LLM | Anthropic API (claude-sonnet-4-6) with tool use + streaming | Tool use API lets agent make structured edits; streaming pipes token-by-token over same WS channel |
-| MCP | Notion MCP server via mcp_servers param in Anthropic API call | Per-user OAuth token, passed per-invocation |
+| LLM | OpenRouter (OpenAI-compatible Chat Completions API), model configurable via `OPENROUTER_MODEL` — default `qwen/qwen3-coder:free` | Free tier avoids API costs during development (no Anthropic key available); OpenAI-compatible tool-calling surface means the agent loop isn't locked to one vendor. See "AI agent architecture → LLM provider" below for the tradeoffs this creates |
+| MCP | Notion MCP server via a self-hosted MCP client (`@modelcontextprotocol/sdk`) in agent-worker | OpenRouter has no server-side MCP passthrough (unlike Anthropic's `mcp_servers` param) — agent-worker owns the MCP connection directly and feeds results into the tool loop manually. Arguably a better interview story: demonstrates protocol-level understanding instead of relying on a hosted connector |
 | Reverse proxy | Nginx | Upstream block + WebSocket upgrade headers + load balancing across realtime-server replicas |
 | Deployment | Vercel (web) + Railway/Render (api-server + realtime-server) + optional Oracle Cloud VM (Nginx + Docker) | Vercel can't host long-lived WS processes |
 | Monitoring | Sentry (Week 6) | |
@@ -210,6 +210,14 @@ Key: doc:{documentId}:snapshot:lock TTL: 10s (prevent concurrent Mongo snapshot 
 Key: ratelimit:agent:{userId}:{minute}
 Type: INCR + EXPIRE 60
 Purpose: cap LLM/MCP invocations per user per minute
+
+Key: ratelimit:agent:global:{minute}
+Type: INCR + EXPIRE 60
+Purpose: cap total invocations across ALL users per minute — required because
+  OpenRouter's free-tier rate limit (20 req/min, 50-1000 req/day depending on
+  lifetime spend) is per API key, i.e. per-app, not per-end-user. A per-user
+  limit alone doesn't prevent 5 concurrent users from collectively blowing the
+  account-wide cap and 429ing every other user's request.
 ```
 
 ---
@@ -225,9 +233,12 @@ translate to Yjs operations.
 1. User types "@Electra [prompt]" in the document
 2. api-server creates AgentInvocation record (status: "pending")
 3. Agent worker opens a server-side Y.Doc connection to the document room
-4. LLM call (claude-sonnet-4-6) with:
+4. LLM call via OpenRouter (OpenAI-compatible /chat/completions, model = OPENROUTER_MODEL) with:
    - tools: [editDocument, insertText, formatSelection, ...]
-   - mcp_servers: [{ type: "url", url: notionMcpUrl }]  ← user's Notion OAuth token attached
+   - Notion tool results fetched by our own MCP client (talks to Notion's MCP
+     server directly using the user's OAuth token) and appended as tool-role
+     messages in the same request — no server-side passthrough param exists
+     on OpenRouter the way Anthropic's mcp_servers does
 5. Each tool call → translated to Yjs ops on agent's Y.Doc
 6. Yjs ops → published to doc:{id}:updates Redis channel
 7. All connected clients (human + agent) see edits propagate live via CRDT sync
@@ -240,6 +251,33 @@ translate to Yjs operations.
 - Multi-tenant: each user's Notion token is different, passed per-invocation
 - Agent must emit awareness state updates the same way a human client would
 - Tool calls can partially fail mid-stream — partial edits must not corrupt the CRDT state
+
+### LLM provider: OpenRouter (decided 2026-07-12, no Anthropic API key available)
+- Env vars: `OPENROUTER_API_KEY`, `OPENROUTER_MODEL` (default `qwen/qwen3-coder:free` —
+  1M context, native tool-calling, "coder" tuning fits the precise-structured-output
+  need better than a general chat model; `openai/gpt-oss-120b:free` is the fallback to
+  try if tool-call reliability underperforms in practice)
+- **Verify the model ID still exists before implementing** — OpenRouter's free model
+  catalog rotates (providers add/remove free offerings regularly). Check
+  `https://openrouter.ai/api/v1/models` (public, no auth) and filter for
+  `id.endsWith(":free")` + `supported_parameters.includes("tools")` rather than
+  trusting this file if it's been a while since it was written.
+- Client: OpenRouter's own `@openrouter/sdk` (or `@openrouter/agent` for the tool-use
+  loop specifically — it declares tools with Zod schemas, which fits this repo's
+  existing Zod-first convention). Confirm exact package/API against current OpenRouter
+  docs when actually implementing — don't assume the generic `openai` SDK pattern
+  without checking, OpenRouter has moved to first-party SDKs.
+- **Rate limit is account-wide, not per-user**: OpenRouter's free tier is 20 req/min
+  and 50 req/day per API key (rising to 1000/day after a one-time $10 lifetime spend,
+  permanently). That's shared across every user of the app, not 50/day *each* — see
+  Redis Role D above. Size the per-user and global limits accordingly, and design for
+  graceful degradation (a clear "agent is busy, try again in a minute" response) when
+  the global cap is hit, not a silent failure.
+- No MCP passthrough (see the MCP row in the tech stack table above) — agent-worker
+  runs its own MCP client against Notion's MCP server.
+- This is a swappable decision, not a permanent one — if API credits become available
+  later, only the LLM-calling code in agent-worker changes; the tool definitions,
+  Yjs-translation layer, and everything else in this section stays the same.
 
 ---
 
@@ -293,7 +331,7 @@ GET  /documents/:id/agent   get AgentInvocation history for a document
 Week 1 (NOW)  — Auth + REST API + Mongo schemas + Next.js shell + Docker local dev
 Week 2        — Yjs core: single-instance collaboration, Tiptap binding, awareness/presence
 Week 3        — Redis pub/sub fan-out, multiple realtime-server instances, Nginx load balancing
-Week 4        — LLM agent participant (Anthropic tool use, agent as Yjs peer)
+Week 4        — LLM agent participant (OpenRouter tool use, agent as Yjs peer)
 Week 5        — Notion MCP + OAuth, deployment (Vercel + Railway/Render)
 Week 6        — Sentry, polish, load testing, README, resume bullet drafting
 Week 7        — Tauri desktop shell (stretch goal)
@@ -319,7 +357,7 @@ agent when the work is squarely inside one section:
 |---|---|
 | `api-server` | Express, Mongoose schemas, JWT auth + refresh rotation, REST routes, Zod validation, Notion OAuth callback |
 | `realtime-server` | Yjs CRDT core, y-websocket server, Redis pub/sub fan-out, awareness/presence, snapshot persistence |
-| `agent-worker` | LLM agent as Yjs peer, Anthropic tool use + streaming, tool-call→Yjs translation, Notion MCP wiring |
+| `agent-worker` | LLM agent as Yjs peer, OpenRouter tool use + streaming, tool-call→Yjs translation, self-hosted Notion MCP client |
 | `web-frontend` | Next.js App Router pages, Tiptap editor + Yjs binding, Zustand stores, presence UI, auth token handling |
 
 Cross-cutting work (touching shared-types + multiple apps, or wiring contracts between
