@@ -1,10 +1,36 @@
 import * as Y from "yjs";
 
+import { redisPub } from "./config/redis";
+import { INSTANCE_ID } from "./instanceId";
 import { DocumentSnapshot } from "./models/Document";
 import type { Room } from "./rooms";
 
 const SNAPSHOT_DEBOUNCE_MS = Number(process.env.SNAPSHOT_DEBOUNCE_MS) || 2000;
 const SNAPSHOT_MAX_INTERVAL_MS = Number(process.env.SNAPSHOT_MAX_INTERVAL_MS) || 30000;
+const SNAPSHOT_LOCK_TTL_MS = 10000;
+
+// Only deletes the lock if it still holds OUR token — guards against
+// deleting a lock a different instance acquired after ours expired mid-write.
+const RELEASE_LOCK_SCRIPT = `
+if redis.call("get", KEYS[1]) == ARGV[1] then
+  return redis.call("del", KEYS[1])
+else
+  return 0
+end
+`;
+
+function snapshotLockKey(documentId: string): string {
+  return `doc:${documentId}:snapshot:lock`;
+}
+
+async function acquireSnapshotLock(documentId: string): Promise<boolean> {
+  const result = await redisPub.set(snapshotLockKey(documentId), INSTANCE_ID, "PX", SNAPSHOT_LOCK_TTL_MS, "NX");
+  return result === "OK";
+}
+
+async function releaseSnapshotLock(documentId: string): Promise<void> {
+  await redisPub.eval(RELEASE_LOCK_SCRIPT, 1, snapshotLockKey(documentId), INSTANCE_ID);
+}
 
 /**
  * Loads the last persisted Y.Doc snapshot for a document, if one exists.
@@ -42,6 +68,28 @@ async function writeSnapshot(room: Room): Promise<void> {
 }
 
 /**
+ * Same as writeSnapshot, but guarded by a short Redis lock so that when
+ * multiple instances host clients for the same room (they converge to the
+ * same Yjs state via Redis fan-out, but each runs its own debounce timer),
+ * only one of them actually writes to Mongo at a time. This isn't a
+ * correctness requirement — concurrent unlocked writes would just be
+ * redundant, never corrupting, since CRDT state converges regardless — it
+ * only exists to cut duplicate writes. If the lock isn't acquired, skip: the
+ * instance holding it is about to save equivalent state, and our own timer
+ * will fire again soon regardless.
+ */
+async function writeSnapshotIfLockAcquired(room: Room): Promise<void> {
+  const acquired = await acquireSnapshotLock(room.documentId);
+  if (!acquired) return;
+
+  try {
+    await writeSnapshot(room);
+  } finally {
+    await releaseSnapshotLock(room.documentId);
+  }
+}
+
+/**
  * Call after every doc update. Debounces writes so rapid edits don't cause a
  * Mongo write per keystroke, but caps how long a continuously-active room can
  * go without saving — every update resets a short timer, but that timer is
@@ -61,7 +109,7 @@ export function scheduleSnapshot(room: Room): void {
 
   room.snapshotTimer = setTimeout(() => {
     room.snapshotTimer = null;
-    void writeSnapshot(room);
+    void writeSnapshotIfLockAcquired(room);
   }, delay);
 }
 
