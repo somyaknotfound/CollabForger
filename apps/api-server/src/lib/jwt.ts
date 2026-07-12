@@ -22,6 +22,17 @@ export function signAccessToken(userId: string): string {
   });
 }
 
+// Signs a short-lived token for the agent process itself to join a document's
+// Yjs room as a peer — realtime-server verifies it with the same
+// JWT_ACCESS_SECRET as any user token, it just carries a synthetic sub
+// ("agent:<invocationId>") instead of a real User _id. 5 minutes is enough
+// for one invocation's tool-call loop; the token isn't reused across invocations.
+export function signAgentToken(invocationId: string): string {
+  return jwt.sign({ sub: `agent:${invocationId}` }, requireEnv("JWT_ACCESS_SECRET"), {
+    expiresIn: "5m",
+  });
+}
+
 export function verifyAccessToken(token: string): AccessTokenPayload {
   return jwt.verify(token, requireEnv("JWT_ACCESS_SECRET")) as AccessTokenPayload;
 }

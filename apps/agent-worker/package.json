@@ -1,0 +1,31 @@
+{
+  "name": "@collabforge/agent-worker",
+  "version": "0.0.1",
+  "private": true,
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@collabforge/shared-types": "workspace:*",
+    "@openrouter/agent": "^0.7.2",
+    "@openrouter/sdk": "^0.13.44",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "lib0": "^0.2.117",
+    "mongoose": "^8.9.3",
+    "ws": "^8.21.0",
+    "y-protocols": "^1.0.7",
+    "yjs": "^13.6.31",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.10.2",
+    "@types/ws": "^8.5.13",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.7.2"
+  }
+}
