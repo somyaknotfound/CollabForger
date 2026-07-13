@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "noEmit": false,
+    // Unlike shared-types, nothing imports agent-worker as a library — it's
+    // a leaf service. Declaration emission is off because @openrouter/agent's
+    // tool() return type isn't portable to a standalone .d.ts (TS2742);
+    // there's no consumer that would need the .d.ts anyway.
+    "declaration": false,
+    "declarationMap": false
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}

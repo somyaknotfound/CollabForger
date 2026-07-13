@@ -2,5 +2,8 @@ packages:
   - "apps/*"
   - "packages/*"
 allowBuilds:
+  '@openrouter/sdk': set this to true or false
   bcrypt: true
   unrs-resolver: true
+minimumReleaseAgeExclude:
+  - '@openrouter/sdk@0.13.44'

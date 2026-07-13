@@ -5,6 +5,7 @@ import express from "express";
 
 import { connectDB } from "./config/db";
 import { redis } from "./config/redis";
+import agentRoutes from "./routes/agent";
 import authRoutes from "./routes/auth";
 import documentRoutes from "./routes/documents";
 
@@ -26,6 +27,7 @@ app.get("/health", (_req, res) => {
 
 app.use("/auth", authRoutes);
 app.use("/documents", documentRoutes);
+app.use("/documents/:id/agent", agentRoutes);
 
 async function start(): Promise<void> {
   const mongoUri = process.env.MONGODB_URI;
